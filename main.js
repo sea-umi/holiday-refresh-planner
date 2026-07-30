@@ -1,4 +1,6 @@
 import "./style.css";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 
 const QUESTIONS = [
   {
@@ -74,6 +76,24 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// Difyの回答はMarkdown形式です。HTMLへ変換したあとに必ず無害化してから表示します。
+// これにより、見出し・太字・表を読みやすく表示しつつ、危険なHTMLは画面へ入れません。
+const markdownRenderer = new marked.Renderer();
+markdownRenderer.html = () => "";
+
+function renderDifyMarkdown(markdown) {
+  const html = marked.parse(markdown, {
+    breaks: true,
+    gfm: true,
+    renderer: markdownRenderer,
+  });
+
+  return DOMPurify.sanitize(html, {
+    FORBID_ATTR: ["class", "id", "style"],
+    FORBID_TAGS: ["button", "embed", "form", "iframe", "input", "object", "script", "style"],
+  });
 }
 
 function render() {
@@ -214,7 +234,7 @@ function renderResult() {
       </div>
       <h2 class="result-title">あなたのためのリフレッシュプラン</h2>
       <p class="result-message">選択した内容をもとに、Dify AIが提案したプランです。</p>
-      <div class="ai-answer">${escapeHtml(STATE.result)}</div>
+      <div class="ai-answer markdown-body">${renderDifyMarkdown(STATE.result)}</div>
       <div class="restart-row">
         <button class="btn btn-primary" data-action="restart" type="button">もう一度プランを作る</button>
       </div>

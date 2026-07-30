@@ -10,8 +10,10 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "dompurify": "^3.4.12",
     "dotenv": "^16.4.7",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "marked": "^18.0.7"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
