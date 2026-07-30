@@ -61,9 +61,20 @@ const STATE = {
   step: 0,
   answers: {},
   view: "form",
+  result: "",
+  error: "",
 };
 
 const CHECK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 function render() {
   const app = document.querySelector("#app");
@@ -172,6 +183,7 @@ function renderConfirm() {
       <p class="question-label">CONFIRM</p>
       <h2 class="question-title">選択内容を確認してください</h2>
       <div class="confirm-list">${items}</div>
+      ${STATE.error ? `<p class="form-error" role="alert">${escapeHtml(STATE.error)}</p>` : ""}
       <div class="nav-row">
         <button class="btn btn-secondary" data-action="prev" type="button">前へ戻る</button>
         <button class="btn btn-primary" data-action="restart" type="button">やり直す</button>
@@ -195,26 +207,14 @@ function renderLoading() {
 }
 
 function renderResult() {
-  const plan = generatePlan(STATE.answers);
-  const planItems = plan.items.map((item) => `
-    <li class="plan-item">
-      <span class="plan-item-time">${item.time}</span>
-      <div class="plan-item-body">
-        <p class="plan-item-title">${item.title}</p>
-        <p class="plan-item-desc">${item.desc}</p>
-      </div>
-    </li>
-  `).join("");
-
   return `
     <section class="step is-open result-card">
       <div class="result-header">
         <span class="result-badge">AI PROGRAM</span>
       </div>
-      <h2 class="result-title">${plan.title}</h2>
-      <p class="result-message">${plan.message}</p>
-      <ul class="plan-list">${planItems}</ul>
-      <p class="result-note">このプランは仮のサンプル回答です。今後 AI 連携でより精度の高い提案が可能になります。</p>
+      <h2 class="result-title">あなたのためのリフレッシュプラン</h2>
+      <p class="result-message">選択した内容をもとに、Dify AIが提案したプランです。</p>
+      <div class="ai-answer">${escapeHtml(STATE.result)}</div>
       <div class="restart-row">
         <button class="btn btn-primary" data-action="restart" type="button">もう一度プランを作る</button>
       </div>
@@ -291,6 +291,45 @@ function bindEvents() {
   });
 }
 
+function buildDifyInputs() {
+  return {
+    tsukare_type: OPTION_LABELS[STATE.answers.fatigue],
+    available_time: OPTION_LABELS[STATE.answers.time],
+    direction1: OPTION_LABELS[STATE.answers.place],
+    direction2: OPTION_LABELS[STATE.answers.style],
+  };
+}
+
+async function requestRefreshPlan() {
+  STATE.error = "";
+  STATE.view = "loading";
+  render();
+
+  try {
+    const response = await fetch("/api/refresh-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildDifyInputs()),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || typeof data.answer !== "string") {
+      throw new Error(data.error || "AIプランを取得できませんでした。時間をおいて再度お試しください。");
+    }
+
+    STATE.result = data.answer;
+    STATE.view = "result";
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (error) {
+    STATE.error = error instanceof Error
+      ? error.message
+      : "AIプランを取得できませんでした。時間をおいて再度お試しください。";
+    STATE.view = "confirm";
+    render();
+  }
+}
+
 function handleAction(e) {
   const action = e.currentTarget.getAttribute("data-action");
 
@@ -298,6 +337,7 @@ function handleAction(e) {
     const qid = e.currentTarget.getAttribute("data-question");
     const value = e.currentTarget.getAttribute("data-value");
     STATE.answers[qid] = value;
+    STATE.error = "";
     render();
     return;
   }
@@ -334,13 +374,7 @@ function handleAction(e) {
   }
 
   if (action === "generate") {
-    STATE.view = "loading";
-    render();
-    setTimeout(() => {
-      STATE.view = "result";
-      render();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }, 1800);
+    void requestRefreshPlan();
     return;
   }
 
@@ -348,6 +382,8 @@ function handleAction(e) {
     STATE.step = 0;
     STATE.answers = {};
     STATE.view = "form";
+    STATE.result = "";
+    STATE.error = "";
     render();
     window.scrollTo({ top: 0, behavior: "smooth" });
     return;
