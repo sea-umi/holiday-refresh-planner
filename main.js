@@ -58,13 +58,52 @@ const OPTION_LABELS = (() => {
 
 const TOTAL_STEPS = QUESTIONS.length;
 const CONFIRM_STEP = TOTAL_STEPS;
+const DRAFT_STORAGE_KEY = "holiday-refresh-planner-draft-v1";
+
+function loadDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY));
+    if (!saved || typeof saved !== "object" || !saved.answers) return null;
+
+    const answers = {};
+    QUESTIONS.forEach((question) => {
+      const value = saved.answers[question.id];
+      if (question.options.some((option) => option.value === value)) {
+        answers[question.id] = value;
+      }
+    });
+
+    const step = Number(saved.step);
+    const validStep = Number.isInteger(step) && step >= 0 && step <= CONFIRM_STEP
+      ? step
+      : 0;
+
+    return Object.keys(answers).length ? { answers, step: validStep } : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft() {
+  localStorage.setItem(
+    DRAFT_STORAGE_KEY,
+    JSON.stringify({ answers: STATE.answers, step: STATE.step })
+  );
+}
+
+function clearDraft() {
+  localStorage.removeItem(DRAFT_STORAGE_KEY);
+}
+
+const savedDraft = loadDraft();
 
 const STATE = {
-  step: 0,
-  answers: {},
-  view: "form",
+  step: savedDraft?.step ?? 0,
+  answers: savedDraft?.answers ?? {},
+  view: savedDraft ? "resume" : "form",
   result: "",
   error: "",
+  copyStatus: "",
 };
 
 const CHECK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -142,6 +181,9 @@ function renderProgress() {
 }
 
 function renderContent() {
+  if (STATE.view === "resume") {
+    return renderResume();
+  }
   if (STATE.view === "loading") {
     return renderLoading();
   }
@@ -152,6 +194,20 @@ function renderContent() {
     return renderConfirm();
   }
   return renderQuestion();
+}
+
+function renderResume() {
+  return `
+    <section class="step is-open card">
+      <p class="question-label">WELCOME BACK</p>
+      <h2 class="question-title">前回の入力の続きから始めますか？</h2>
+      <p class="draft-note">選んだ内容は、この端末のブラウザに一時保存されています。</p>
+      <div class="nav-row">
+        <button class="btn btn-secondary" data-action="discard-draft" type="button">最初から始める</button>
+        <button class="btn btn-primary" data-action="resume-draft" type="button">続きから再開</button>
+      </div>
+    </section>
+  `;
 }
 
 function renderQuestion() {
@@ -235,6 +291,11 @@ function renderResult() {
       <h2 class="result-title">あなたのためのリフレッシュプラン</h2>
       <p class="result-message">選択した内容をもとに、Dify AIが提案したプランです。</p>
       <div class="ai-answer markdown-body">${renderDifyMarkdown(STATE.result)}</div>
+      <div class="result-actions">
+        <button class="btn btn-secondary" data-action="copy" type="button">プランをコピー</button>
+        <button class="btn btn-secondary" data-action="print" type="button">印刷・PDF保存</button>
+      </div>
+      ${STATE.copyStatus ? `<p class="copy-status" role="status">${escapeHtml(STATE.copyStatus)}</p>` : ""}
       <div class="restart-row">
         <button class="btn btn-primary" data-action="restart" type="button">もう一度プランを作る</button>
       </div>
@@ -339,6 +400,8 @@ async function requestRefreshPlan() {
 
     STATE.result = data.answer;
     STATE.view = "result";
+    STATE.copyStatus = "";
+    clearDraft();
     render();
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (error) {
@@ -350,6 +413,19 @@ async function requestRefreshPlan() {
   }
 }
 
+async function copyPlan() {
+  const text = `休日リフレッシュプランナー\n\n${STATE.result}`;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    STATE.copyStatus = "プランをコピーしました。メモやLINEなどに貼り付けられます。";
+  } catch {
+    STATE.copyStatus = "コピーできませんでした。ブラウザの権限を確認して、もう一度お試しください。";
+  }
+
+  render();
+}
+
 function handleAction(e) {
   const action = e.currentTarget.getAttribute("data-action");
 
@@ -358,6 +434,7 @@ function handleAction(e) {
     const value = e.currentTarget.getAttribute("data-value");
     STATE.answers[qid] = value;
     STATE.error = "";
+    saveDraft();
     render();
     return;
   }
@@ -366,9 +443,12 @@ function handleAction(e) {
     if (STATE.step < TOTAL_STEPS - 1) {
       STATE.step += 1;
       STATE.view = "form";
+      saveDraft();
       render();
     } else {
       STATE.view = "confirm";
+      STATE.step = CONFIRM_STEP;
+      saveDraft();
       render();
     }
     return;
@@ -381,6 +461,7 @@ function handleAction(e) {
     } else if (STATE.step > 0) {
       STATE.step -= 1;
     }
+    saveDraft();
     render();
     return;
   }
@@ -389,6 +470,7 @@ function handleAction(e) {
     const step = Number(e.currentTarget.getAttribute("data-step"));
     STATE.view = "form";
     STATE.step = step;
+    saveDraft();
     render();
     return;
   }
@@ -398,12 +480,39 @@ function handleAction(e) {
     return;
   }
 
+  if (action === "resume-draft") {
+    STATE.view = STATE.step === CONFIRM_STEP ? "confirm" : "form";
+    render();
+    return;
+  }
+
+  if (action === "discard-draft") {
+    clearDraft();
+    STATE.step = 0;
+    STATE.answers = {};
+    STATE.view = "form";
+    render();
+    return;
+  }
+
+  if (action === "copy") {
+    void copyPlan();
+    return;
+  }
+
+  if (action === "print") {
+    window.print();
+    return;
+  }
+
   if (action === "restart") {
     STATE.step = 0;
     STATE.answers = {};
     STATE.view = "form";
     STATE.result = "";
     STATE.error = "";
+    STATE.copyStatus = "";
+    clearDraft();
     render();
     window.scrollTo({ top: 0, behavior: "smooth" });
     return;
